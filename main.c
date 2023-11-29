@@ -1,151 +1,206 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
+#include <avr/sfr_defs.h>
+#include <avr/common.h>
+#include <avr/wdt.h>
 
-#define TRIG_PIN PD3
-#define ECHO_PIN PD2
-#define ML_A PD4
-#define ML_B PD5
-#define MR_A PD6
-#define MR_B PD7
-#define BUZZER_PIN PB3
-#define LED_PIN PB5
-#define SERVO_PIN PB1
 
-volatile unsigned long duration;
-volatile unsigned long distance;
+// Define pin configurations
+#define trigPin PD2  // Trig Pin Of HC-SR04
+#define echoPin PD3  // Echo Pin Of HC-SR04
+#define MLa PD4      // Left motor 1st pin
+#define MLb PD5      // Left motor 2nd pin
+#define MRa PD6      // Right motor 1st pin
+#define MRb PD7      // Right motor 2nd pin
+#define buzzerPin PB3 // Buzzer pin
+#define ledPin PB5    // LED pin
+#define knob_pin PC0  // A0 pin potentiometer
+#define led_pin_pot PB2 // Pin led ADC
+#define servoPin PB1	// servo pin 
 
-void initUART() {
-    // Set baud rate to 9600
-    UBRR0H = 0;
-    UBRR0L = 103;
+// Variables for ultrasonic sensor
+volatile long duration, distance;
 
-    // Enable receiver and transmitter
-    UCSR0B = (1 << RXEN0) | (1 << TXEN0);
+// Function prototypes
+void initADC();
+uint16_t readADC(uint8_t channel);
+void initTimer0();
+void initTimer1();
+void initUSART();
+void transmitUSART(unsigned char data);
+void transmitDistance();
+void initInterrupt();
+void setBrightness(uint8_t brightness);
+void setServoAngle(uint8_t angle);
+void init();
 
-    // Set frame format: 8 data bits, 1 stop bit
-    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+// External interrupt service routine for Echo pin
+ISR(INT1_vect) {
+	if (PIND & (1 << echoPin)) {
+		// Rising edge
+		TCNT1 = 0; // Reset Timer1 counter
+		} else {
+		// Falling edge
+		duration = TCNT1 / 2; // Calculate distance in cm
+		distance = duration / 29.1;
+	}
 }
 
-void initPWM() {
-    // Set up Timer1 for PWM on SERVO_PIN (PB1)
-    TCCR1A |= (1 << COM1A1) | (1 << WGM11) | (1 << WGM10);
-    TCCR1B |= (1 << WGM13) | (1 << CS11);
-
-    // Set SERVO_PIN (PB1) as output
-    DDRB |= (1 << SERVO_PIN);
+// Initialize ADC for potentiometer reading
+void initADC() {
+	// Set the reference voltage to AVcc
+	ADMUX |= (1 << REFS0);
+	// Set prescaler to 128 (ADPS2, ADPS1, ADPS0 bits)
+	ADCSRA |= (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+	// Enable ADC
+	ADCSRA |= (1 << ADEN);
 }
 
-void initIO() {
-    // Set motor control pins as output
-    DDRC |= (1 << ML_A) | (1 << ML_B) | (1 << MR_A) | (1 << MR_B);
-
-    // Set TRIG_PIN as output
-    DDRD |= (1 << TRIG_PIN);
-
-    // Set ECHO_PIN as input
-    DDRD &= ~(1 << ECHO_PIN);
-
-    // Set BUZZER_PIN and LED_PIN as output
-    DDRB |= (1 << BUZZER_PIN) | (1 << LED_PIN);
+// Read ADC value from the specified channel
+uint16_t readADC(uint8_t channel) {
+	// Select ADC channel
+	ADMUX = (ADMUX & 0xF0) | (channel & 0x0F);
+	// Start single conversion
+	ADCSRA |= (1 << ADSC);
+	// Wait for conversion to complete
+	while (ADCSRA & (1 << ADSC));
+	// Return ADC result
+	return ADC;
 }
 
+// Initialize Timer0 for PWM control of LED
+void initTimer0() {
+	// Set up Timer0 in PWM mode for LED control
+	TCCR0A |= (1 << WGM00) | (1 << WGM01) | (1 << COM0A1);
+	TCCR0B |= (1 << CS01) | (1 << CS00); // Set prescaler to 64
+}
+
+// Initialize Timer1 for PWM control of servo
+void initTimer1() {
+	// Set up Timer1 in PWM mode for servo control
+	TCCR1A |= (1 << WGM11) | (1 << COM1A1);
+	TCCR1B |= (1 << WGM12) | (1 << WGM13) | (1 << CS11) | (1 << CS10); // Set prescaler to 64
+}
+
+// Initialize USART for serial communication
+void initUSART() {
+	// Set baud rate to 9600
+	UBRR0H = (unsigned char)(103 >> 8);
+	UBRR0L = (unsigned char)103;
+	// Enable receiver and transmitter
+	UCSR0B = (1 << RXEN0) | (1 << TXEN0);
+	// Set frame format: 8 data, 1 stop bit
+	UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+}
+
+// Transmit a character over USART
+void transmitUSART(unsigned char data) {
+	// Wait for empty transmit buffer
+	while (!(UCSR0A & (1 << UDRE0)));
+	// Put data into buffer, sends the data
+	UDR0 = data;
+}
+
+// Transmit distance over USART
+void transmitDistance() {
+	char buffer[10];
+	itoa(distance, buffer, 10);
+	for (int i = 0; buffer[i] != '\0'; i++) {
+		transmitUSART(buffer[i]);
+	}
+	transmitUSART('\n');
+}
+
+// Initialize external interrupt for Echo pin
 void initInterrupt() {
-    // Enable external interrupt on ECHO_PIN (PD2)
-    EIMSK |= (1 << INT0);
-
-    // Falling edge triggers interrupt
-    EICRA |= (1 << ISC01);
+	// Enable external interrupt for Echo pin (PD3)
+	EICRA |= (1 << ISC11); // Falling edge generates interrupt
+	EIMSK |= (1 << INT1);  // Enable external interrupt 1
 }
 
+// Set LED brightness based on potentiometer value
+void setBrightness(uint8_t brightness) {
+	OCR0A = brightness;
+}
+
+// Set servo angle based on potentiometer value
+void setServoAngle(uint8_t angle) {
+	OCR1A = (angle * 10) + 1000;
+}
+
+// Initialize all components
 void init() {
-    initIO();
-    initPWM();
-    initUART();
-    initInterrupt();
-    sei(); // Enable global interrupts
+	// Set up ports for output
+	DDRB |= (1 << MLa) | (1 << MLb) | (1 << MRa) | (1 << MRb) | (1 << buzzerPin) | (1 << ledPin) | (1 << led_pin_pot);
+	DDRD |= (1 << trigPin) | (1 << servoPin);
+	// Set up port for input
+	DDRC &= ~(1 << echoPin);
+
+	// Initialize components
+	initADC();
+	initTimer0();
+	initTimer1();
+	initUSART();
+	initInterrupt();
+
+	// Enable global interrupts
+	sei();
 }
 
-void sendString(const char *str) {
-    while (*str != '\0') {
-        // Wait for empty transmit buffer
-        while (!(UCSR0A & (1 << UDRE0)));
+int main() {
+	// Initialize components
+	init();
 
-        // Put data into buffer, sends the data
-        UDR0 = *str;
+	while (1) {
+		// Ultrasonic sensor
+		PORTD |= (1 << trigPin);
+		_delay_us(10);
+		PORTD &= ~(1 << trigPin);
 
-        str++;
-    }
-}
+		// Potentiometer
+		uint16_t val = readADC(0);
+		uint8_t brightness = val / 4;
+		setBrightness(brightness);
 
-void sendDistance() {
-    char buffer[10];
-    itoa(distance, buffer, 10);
-    sendString(buffer);
-    sendString(" cm\r\n");
-}
+		if (distance > 35) {
+			// No obstacle detected
+			PORTB &= ~((1 << buzzerPin) | (1 << ledPin));
 
-void moveForward() {
-    PORTC = (1 << ML_B) | (1 << MR_B);
-}
+			setServoAngle(90);
 
-void stop() {
-    PORTC = 0;
-}
+			PORTD |= (1 << MRb) | (1 << MLb);
+			PORTD &= ~((1 << MLa) | (1 << MRa));
+			} else if (distance < 30 && distance > 0) {
+			// Obstacle detected
+			PORTB |= (1 << buzzerPin) | (1 << ledPin);
 
-void moveBackward() {
-    PORTC = (1 << ML_A) | (1 << MR_A);
-}
+			// Your existing obstacle avoidance code here...
+			PORTD &= ~((1 << MRb) | (1 << MLa) | (1 << MLb));
+			PORTD |= (1 << MRa);
+			_delay_ms(100);
 
-void moveLeft() {
-    PORTC = (1 << MR_B) | (1 << ML_A);
-}
+			setServoAngle(0);
+			_delay_ms(500);
+			setServoAngle(180);
+			_delay_ms(500);
+			setServoAngle(90);
+			_delay_ms(500);
 
-ISR(INT0_vect) {
-    if (PIND & (1 << ECHO_PIN)) {
-        // Rising edge, record the time
-        TCNT1 = 0; // Reset Timer1
-    } else {
-        // Falling edge, calculate the duration
-        duration = TCNT1;
-        distance = (duration * 0.0343) / 2; // Speed of sound is approximately 343 meters/second
+			PORTD |= (1 << MRb) | (1 << MLb);
+			PORTD &= ~((1 << MLa) | (1 << MRa));
+			_delay_ms(500);
 
-        // Perform obstacle avoidance logic
-        if (distance > 15) {
-            // No obstacle detected
-            PORTB &= ~((1 << BUZZER_PIN) | (1 << LED_PIN));
-            moveForward();
-        } else if (distance > 0 && distance < 10) {
-            // Obstacle detected
-            PORTB |= (1 << BUZZER_PIN) | (1 << LED_PIN);
-            stop();
+			PORTD &= ~((1 << MRb) | (1 << MLa) | (1 << MLb));
+			PORTD |= (1 << MRa);
+			_delay_ms(200);
 
-            OCR1A = 150; // Move servo to 90 degrees
-            _delay_ms(500);
-            OCR1A = 600; // Move servo to 0 degrees
-            _delay_ms(500);
-            OCR1A = 300; // Move servo to 180 degrees
-            _delay_ms(500);
-            OCR1A = 150; // Move servo back to 90 degrees
+			// Additional actions blinking LED, buzzing sound
+			PORTB &= ~((1 << buzzerPin) | (1 << ledPin));
+		}
 
-            moveBackward();
-            _delay_ms(500);
-            stop();
-            _delay_ms(100);
+		_delay_ms(10);
+	}
 
-            moveLeft();
-            _delay_ms(500);
-        }
-    }
-}
-
-int main(void) {
-    init();
-
-    while (1) {
-        sendDistance();
-        _delay_ms(10);
-    }
-
-    return 0;
+	return 0;
 }
