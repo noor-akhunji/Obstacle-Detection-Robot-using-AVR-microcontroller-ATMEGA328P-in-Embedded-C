@@ -1,10 +1,10 @@
+
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
 #include <avr/sfr_defs.h>
 #include <avr/common.h>
 #include <avr/wdt.h>
-
 
 // Define pin configurations
 #define trigPin PD2  // Trig Pin Of HC-SR04
@@ -163,39 +163,51 @@ int main() {
 		uint8_t brightness = val / 4;
 		setBrightness(brightness);
 
+		// if distance is > 35 then car moves forward 
 		if (distance > 35) {
 			// No obstacle detected
 			PORTB &= ~((1 << buzzerPin) | (1 << ledPin));
-
+			
+			// set servo in front middle to detect obstacle infront
 			setServoAngle(90);
+			
+			// move forward
+			PORTD |= (1 << MRa) | (1 << MLa);
+			PORTD &= ~((1 << MLb) | (1 << MRb));
 
-			PORTD |= (1 << MRb) | (1 << MLb);
-			PORTD &= ~((1 << MLa) | (1 << MRa));
+			// if distance is < 30 then car stops and change direction
 			} else if (distance < 30 && distance > 0) {
-			// Obstacle detected
+			
+			// Obstacle detected turn on buzzer and led
 			PORTB |= (1 << buzzerPin) | (1 << ledPin);
 
-			// Your existing obstacle avoidance code here...
-			PORTD &= ~((1 << MRb) | (1 << MLa) | (1 << MLb));
-			PORTD |= (1 << MRa);
+			// stop motors
+			PORTD &= ~((1 << MRb) | (1 << MLa) | (1 << MLb) | (1 << MRa)); 
 			_delay_ms(100);
 
+			// move servo for checking obstacle from 0 to 180
 			setServoAngle(0);
 			_delay_ms(500);
 			setServoAngle(180);
 			_delay_ms(500);
 			setServoAngle(90);
 			_delay_ms(500);
-
-			PORTD |= (1 << MRb) | (1 << MLb);
-			PORTD &= ~((1 << MLa) | (1 << MRa));
+			
+			// move backward
+			PORTD |= (1 << MRa) | (1 << MLa);
+			PORTD &= ~((1 << MRb) | (1 << MLb));
 			_delay_ms(500);
-
-			PORTD &= ~((1 << MRb) | (1 << MLa) | (1 << MLb));
-			PORTD |= (1 << MRa);
+			
+			// stop
+			PORTD &= ~((1 << MRb) | (1 << MLa) | (1 << MLb) | (1 << MRa));
+			_delay_ms(500);
+			
+			// move left
+			PORTD |= (1 << MRb);
+			PORTD &= ~((1 << MLa) | (1 << MLb) | (1 << MRa));
 			_delay_ms(200);
 
-			// Additional actions blinking LED, buzzing sound
+			// Off blinking LED, buzzing sound
 			PORTB &= ~((1 << buzzerPin) | (1 << ledPin));
 		}
 
