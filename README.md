@@ -8,15 +8,25 @@ For this course work-mini project I used Ultra-sonic Sensor, Servo, Led, Buzzer,
 Components used in project:
 
 1 x Arduino Uno (AtMega328p)
+
 1 x Breadboard
+
 1 x Ultra-sonic Sensor
+
 1 x SG-90 Servo motor
+
 1 x L298N H-bridge motor driver
+
 1 x Buzzer
+
 1 x Potentiometer
+
 1 x 9v Battery
+
 2 x Led
+
 2 x DC motors
+
 2 x wheels
 
 <img width="451" alt="image" src="https://github.com/noor-akhunji/Obstacle-Detection-Robot-using-AVR-microcontroller-ATMEGA328P-in-Embedded-C/assets/84890896/4b9dcb68-46a6-448c-b6d4-ac21e79428d8">
